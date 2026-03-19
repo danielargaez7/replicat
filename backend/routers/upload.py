@@ -4,12 +4,12 @@ from datetime import datetime, timezone
 
 import aiofiles
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from sqlalchemy import select
 
+from database import AnalysisRecord, async_session
 from models.bundle import AnalysisStatus, BundleMetadata
 
 router = APIRouter(tags=["upload"])
-
-analyses: dict[str, BundleMetadata] = {}
 
 
 @router.post("/upload")
@@ -28,25 +28,53 @@ async def upload_bundle(file: UploadFile = File(...)):
             await f.write(chunk)
             size += len(chunk)
 
-    metadata = BundleMetadata(
+    now = datetime.now(timezone.utc)
+    record = AnalysisRecord(
         id=analysis_id,
         filename=file.filename,
-        upload_time=datetime.now(timezone.utc),
-        status=AnalysisStatus.PENDING,
+        upload_time=now,
+        status=AnalysisStatus.PENDING.value,
         size_bytes=size,
     )
-    analyses[analysis_id] = metadata
+    async with async_session() as session:
+        session.add(record)
+        await session.commit()
 
     return {"analysis_id": analysis_id, "filename": file.filename, "size_bytes": size}
 
 
 @router.get("/analyses")
 async def list_analyses():
-    return sorted(analyses.values(), key=lambda a: a.upload_time, reverse=True)
+    async with async_session() as session:
+        result = await session.execute(
+            select(AnalysisRecord).order_by(AnalysisRecord.upload_time.desc())
+        )
+        records = result.scalars().all()
+
+    return [
+        BundleMetadata(
+            id=r.id,
+            filename=r.filename,
+            upload_time=r.upload_time,
+            status=AnalysisStatus(r.status),
+            file_count=r.file_count,
+            size_bytes=r.size_bytes,
+        )
+        for r in records
+    ]
 
 
 @router.get("/analyses/{analysis_id}")
 async def get_analysis_metadata(analysis_id: str):
-    if analysis_id not in analyses:
+    async with async_session() as session:
+        record = await session.get(AnalysisRecord, analysis_id)
+    if not record:
         raise HTTPException(status_code=404, detail="Analysis not found")
-    return analyses[analysis_id]
+    return BundleMetadata(
+        id=record.id,
+        filename=record.filename,
+        upload_time=record.upload_time,
+        status=AnalysisStatus(record.status),
+        file_count=record.file_count,
+        size_bytes=record.size_bytes,
+    )

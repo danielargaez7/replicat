@@ -3,30 +3,49 @@ import os
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select
 
+from cache import get_cached_result, set_cached_result
+from database import (
+    AnalysisRecord,
+    AnalysisResultRecord,
+    BundleRootRecord,
+    async_session,
+)
 from models.findings import AnalysisResult
 
 router = APIRouter(tags=["analysis"])
 
-results_store: dict[str, AnalysisResult] = {}
-bundle_roots: dict[str, str] = {}
-
 
 @router.get("/analysis/{analysis_id}")
 async def get_analysis(analysis_id: str):
-    if analysis_id not in results_store:
+    # Try cache first
+    cached = await get_cached_result(analysis_id)
+    if cached:
+        return AnalysisResult(**cached)
+
+    # Fall back to database
+    async with async_session() as session:
+        record = await session.get(AnalysisResultRecord, analysis_id)
+    if not record:
         raise HTTPException(status_code=404, detail="Analysis not found")
-    return results_store[analysis_id]
+
+    result_data = record.result_data
+    # Populate cache for next time
+    await set_cached_result(analysis_id, result_data)
+    return AnalysisResult(**result_data)
 
 
 @router.get("/analysis/{analysis_id}/logs")
 async def get_log_file(analysis_id: str, path: str = Query(...)):
-    if analysis_id not in bundle_roots:
+    async with async_session() as session:
+        record = await session.get(BundleRootRecord, analysis_id)
+    if not record:
         raise HTTPException(status_code=404, detail="Bundle data not found")
 
     from services.bundle_parser import read_log_file
-    root = bundle_roots[analysis_id]
-    content = read_log_file(root, path, max_lines=1000)
+
+    content = read_log_file(record.root_path, path, max_lines=1000)
     if not content:
         raise HTTPException(status_code=404, detail="Log file not found")
     return {"path": path, "content": content}
@@ -34,21 +53,22 @@ async def get_log_file(analysis_id: str, path: str = Query(...)):
 
 @router.get("/analysis/{analysis_id}/files")
 async def get_file_tree(analysis_id: str):
-    if analysis_id not in results_store:
+    async with async_session() as session:
+        record = await session.get(AnalysisResultRecord, analysis_id)
+    if not record:
         raise HTTPException(status_code=404, detail="Analysis not found")
-    # File tree is included in the full analysis result's parsed data
     return {"analysis_id": analysis_id}
 
 
 @router.get("/analysis/{analysis_id}/stream")
 async def stream_analysis(analysis_id: str):
-    from routers.upload import analyses
     from services.pipeline import run_analysis_pipeline
 
-    if analysis_id not in analyses:
+    async with async_session() as session:
+        metadata = await session.get(AnalysisRecord, analysis_id)
+    if not metadata:
         raise HTTPException(status_code=404, detail="Analysis not found")
 
-    metadata = analyses[analysis_id]
     bundle_path = os.path.join("uploads", analysis_id, metadata.filename)
 
     if not os.path.exists(bundle_path):
@@ -61,7 +81,15 @@ async def stream_analysis(analysis_id: str):
 
             if event_type == "complete":
                 result = AnalysisResult(**data)
-                results_store[analysis_id] = result
+                result_record = AnalysisResultRecord(
+                    id=analysis_id,
+                    bundle_id=result.bundle_id,
+                    result_data=data,
+                )
+                async with async_session() as session:
+                    await session.merge(result_record)
+                    await session.commit()
+                await set_cached_result(analysis_id, data)
 
     return StreamingResponse(
         event_stream(),

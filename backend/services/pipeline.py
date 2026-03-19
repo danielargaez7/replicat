@@ -7,21 +7,32 @@ from __future__ import annotations
 
 from typing import AsyncGenerator
 
-from models.bundle import ParsedBundle
+from database import AnalysisRecord, async_session
+from models.bundle import AnalysisStatus
 from models.findings import AnalysisResult, Finding
 from services.bundle_parser import parse_bundle
 from services.heuristic import run_heuristic_pass
+
+
+async def _set_status(analysis_id: str, status: AnalysisStatus):
+    async with async_session() as session:
+        record = await session.get(AnalysisRecord, analysis_id)
+        if record:
+            record.status = status.value
+            await session.commit()
 
 
 async def run_analysis_pipeline(
     analysis_id: str, bundle_path: str
 ) -> AsyncGenerator[tuple[str, dict | str], None]:
 
+    await _set_status(analysis_id, AnalysisStatus.EXTRACTING)
     yield ("status", {"phase": "extracting", "message": "Extracting bundle..."})
 
     try:
         parsed = await parse_bundle(analysis_id, bundle_path)
     except Exception as e:
+        await _set_status(analysis_id, AnalysisStatus.ERROR)
         yield ("error", {"message": f"Failed to parse bundle: {e}"})
         return
 
@@ -32,6 +43,7 @@ async def run_analysis_pipeline(
     })
 
     # --- Pass 1: Heuristic Triage ---
+    await _set_status(analysis_id, AnalysisStatus.HEURISTIC_PASS)
     yield ("status", {"phase": "heuristic_pass", "message": "Running heuristic analysis..."})
     heuristic_findings = run_heuristic_pass(parsed)
 
@@ -44,6 +56,7 @@ async def run_analysis_pipeline(
     })
 
     # --- Pass 2-4: AI Analysis ---
+    await _set_status(analysis_id, AnalysisStatus.AI_ANALYSIS)
     all_findings = list(heuristic_findings)
     ai_findings: list[Finding] = []
     summary = None
@@ -71,6 +84,7 @@ async def run_analysis_pipeline(
 
         all_findings.extend(ai_findings)
 
+        await _set_status(analysis_id, AnalysisStatus.SYNTHESIS)
         yield ("status", {"phase": "synthesis", "message": "Synthesizing root cause analysis..."})
         synthesis = await run_synthesis(parsed, all_findings)
         summary = synthesis.get("summary", "")
@@ -115,8 +129,14 @@ async def run_analysis_pipeline(
         event_warning_count=warning_events,
     )
 
-    from routers.analysis import bundle_roots
-    bundle_roots[analysis_id] = parsed.extraction_path
+    from database import BundleRootRecord
+    await _set_status(analysis_id, AnalysisStatus.COMPLETE)
+    async with async_session() as session:
+        await session.merge(BundleRootRecord(
+            analysis_id=analysis_id,
+            root_path=parsed.extraction_path,
+        ))
+        await session.commit()
 
     yield ("status", {"phase": "complete", "message": "Analysis complete"})
     yield ("complete", result.model_dump())

@@ -1,4 +1,32 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-bundlescope}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-bundlescope_secret}
+      - POSTGRES_DB=${POSTGRES_DB:-bundlescope}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bundlescope}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   backend:
     build: ./backend
     ports:
@@ -7,8 +35,15 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://bundlescope:bundlescope_secret@postgres:5432/bundlescope}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     volumes:
       - uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 10s
@@ -27,3 +62,5 @@ services:
 
 volumes:
   uploads:
+  pgdata:
+  redisdata:
