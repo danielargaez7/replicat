@@ -328,8 +328,7 @@ async def run_synthesis(
             return {
                 "summary": result.get("summary", "Analysis complete."),
                 "root_cause": result.get("root_cause", ""),
-                "priority_order": result.get("priority_order", []),
-                "correlated_groups": result.get("correlated_groups", []),
+                "issues": result.get("issues", []),
             }
         except json.JSONDecodeError:
             pass

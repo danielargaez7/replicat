@@ -262,8 +262,18 @@ def _parse_services(root: str, parsed: ParsedBundle) -> list[ServiceInfo]:
 
 
 def _parse_events(root: str, parsed: ParsedBundle) -> list[EventInfo]:
-    events_dir = os.path.join(root, "cluster-resources", "events")
-    if not os.path.isdir(events_dir):
+    # Try multiple known event directory locations
+    events_dir = None
+    for candidate in [
+        os.path.join(root, "cluster-resources", "events"),
+        os.path.join(root, "events"),
+        os.path.join(root, "cluster-resources", "events.k8s.io"),
+    ]:
+        if os.path.isdir(candidate):
+            events_dir = candidate
+            break
+
+    if not events_dir:
         return []
 
     events = []
@@ -279,18 +289,40 @@ def _parse_events(root: str, parsed: ParsedBundle) -> list[EventInfo]:
             meta = item.get("metadata", {})
             involved = item.get("involvedObject", {})
 
+            # Handle both legacy (firstTimestamp/lastTimestamp) and
+            # modern (eventTime/metadata.creationTimestamp) K8s event formats.
+            # K8s 1.25+ often has null legacy timestamps.
+            first_ts = (
+                item.get("firstTimestamp")
+                or item.get("eventTime")
+                or meta.get("creationTimestamp")
+            )
+            last_ts = (
+                item.get("lastTimestamp")
+                or item.get("eventTime")
+                or meta.get("creationTimestamp")
+            )
+
+            # Also handle series events (events.k8s.io/v1)
+            series = item.get("series")
+            if series and isinstance(series, dict):
+                last_ts = series.get("lastObservedTime") or last_ts
+
             events.append(EventInfo(
                 namespace=ns_name,
                 name=meta.get("name", ""),
                 involved_object_kind=involved.get("kind", ""),
                 involved_object_name=involved.get("name", ""),
                 reason=item.get("reason", ""),
-                message=item.get("message", ""),
+                message=item.get("message") or item.get("note", ""),
                 event_type=item.get("type", "Normal"),
-                first_timestamp=item.get("firstTimestamp"),
-                last_timestamp=item.get("lastTimestamp"),
-                count=item.get("count", 1),
-                source_component=item.get("source", {}).get("component"),
+                first_timestamp=first_ts,
+                last_timestamp=last_ts,
+                count=item.get("count") or (series.get("count", 1) if series else 1),
+                source_component=(
+                    item.get("source", {}).get("component")
+                    or item.get("reportingComponent", "")
+                ),
             ))
     return events
 

@@ -67,6 +67,13 @@ class TimelineEvent(BaseModel):
     severity: Severity = Severity.INFO
 
 
+class SynthesisIssue(BaseModel):
+    title: str = ""
+    description: str = ""
+    impact: str = ""
+    steps: list[str] = []
+
+
 class AnalysisResult(BaseModel):
     id: str
     bundle_id: str
@@ -76,6 +83,7 @@ class AnalysisResult(BaseModel):
     timeline_events: list[TimelineEvent] = []
     summary: Optional[str] = None
     root_cause: Optional[str] = None
+    issues: list[SynthesisIssue] = []
     cluster_version: Optional[str] = None
     namespace_count: int = 0
     node_count: int = 0

@@ -72,6 +72,7 @@ async def run_analysis_pipeline(
     ai_findings: list[Finding] = []
     summary = None
     root_cause = None
+    issues = []
 
     try:
         from services.ai_analyzer import run_ai_analysis, run_synthesis
@@ -125,6 +126,7 @@ async def run_analysis_pipeline(
         synthesis = await run_synthesis(parsed, all_findings)
         summary = synthesis.get("summary", "")
         root_cause = synthesis.get("root_cause", "")
+        issues = synthesis.get("issues", [])
 
     except Exception as e:
         logger.error("AI pipeline error: %s", e)
@@ -157,6 +159,7 @@ async def run_analysis_pipeline(
         timeline_events=timeline,
         summary=summary,
         root_cause=root_cause,
+        issues=issues,
         cluster_version=cluster_ver,
         namespace_count=len(parsed.namespaces),
         node_count=len(parsed.nodes),

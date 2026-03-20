@@ -600,9 +600,10 @@ def _check_log_errors(parsed: ParsedBundle) -> list[Finding]:
 def build_timeline_events(parsed: ParsedBundle) -> list[TimelineEvent]:
     events = []
     for e in parsed.events:
-        ts = e.last_timestamp or e.first_timestamp
+        ts = e.last_timestamp or e.first_timestamp or ""
+        # Include events even without timestamps — they still have diagnostic value
         if not ts:
-            continue
+            ts = "unknown"
 
         severity = Severity.INFO
         if e.event_type == "Warning":

@@ -36,6 +36,13 @@ export interface TimelineEvent {
   severity: Severity;
 }
 
+export interface SynthesisIssue {
+  title: string;
+  description: string;
+  impact: string;
+  steps: string[];
+}
+
 export interface AnalysisResult {
   id: string;
   bundle_id: string;
@@ -45,6 +52,7 @@ export interface AnalysisResult {
   timeline_events: TimelineEvent[];
   summary?: string;
   root_cause?: string;
+  issues?: SynthesisIssue[];
   cluster_version?: string;
   namespace_count: number;
   node_count: number;

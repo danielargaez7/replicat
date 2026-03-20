@@ -10,7 +10,6 @@ import { FindingCard } from "@/components/analysis/FindingCard";
 import { StreamStatus } from "@/components/analysis/StreamStatus";
 import { TimelineView } from "@/components/analysis/TimelineView";
 import { ChatPanel } from "@/components/analysis/ChatPanel";
-import { SeverityDonut } from "@/components/analysis/SeverityDonut";
 import type { Severity } from "@/lib/types";
 
 type View = "overview" | "findings" | "timeline" | "chat";
@@ -55,6 +54,7 @@ export default function AnalysisPage() {
   }, [findings]);
 
   const healthScore = result?.health_score ?? (isComplete ? 100 : -1);
+  const totalFindings = severityCounts.critical + severityCounts.warning + severityCounts.info + severityCounts.pass;
 
   const healthLabel = healthScore >= 90
     ? "HEALTHY"
@@ -224,7 +224,7 @@ export default function AnalysisPage() {
             {/* Health Score Gauge */}
             <div className="col-span-12 lg:col-span-4 flex flex-col items-center justify-center space-y-3">
               <div className="relative w-48 h-48 flex items-center justify-center">
-                <HealthScoreGauge score={healthScore} />
+                <HealthScoreGauge score={healthScore} spinning={!isComplete} />
                 <div className="absolute inset-0 flex flex-col items-center justify-center">
                   <span className="text-[10px] font-[var(--font-headline-stack)] uppercase tracking-[0.3em] text-on-surface-variant">
                     System Vital
@@ -250,34 +250,16 @@ export default function AnalysisPage() {
 
             {/* Severity Donut + Priority Alerts */}
             <div className="col-span-12 lg:col-span-8 grid grid-cols-1 md:grid-cols-2 gap-8">
-              {/* Severity Distribution */}
+              {/* Severity Distribution — Horizontal Bars */}
               <div className="bg-surface-container-low p-6 border-l-2 border-primary-container">
-                <h3 className="font-[var(--font-headline-stack)] text-xs uppercase tracking-widest text-on-surface-variant mb-8 flex items-center gap-2">
+                <h3 className="font-[var(--font-headline-stack)] text-xs uppercase tracking-widest text-on-surface-variant mb-6 flex items-center gap-2">
                   <span className="material-symbols-outlined text-sm">monitoring</span>
                   SEVERITY DISTRIBUTION
                 </h3>
-                <div className="flex items-center gap-8">
-                  <SeverityDonut counts={severityCounts} />
-                  <div className="flex-1 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-[var(--font-headline-stack)] text-on-surface-variant uppercase tracking-wider flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-md3-error" /> Critical
-                      </span>
-                      <span className="font-mono text-xs">{severityCounts.critical}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-[var(--font-headline-stack)] text-on-surface-variant uppercase tracking-wider flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-md3-tertiary" /> Warning
-                      </span>
-                      <span className="font-mono text-xs">{severityCounts.warning}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-[var(--font-headline-stack)] text-on-surface-variant uppercase tracking-wider flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-md3-secondary" /> Info
-                      </span>
-                      <span className="font-mono text-xs">{severityCounts.info}</span>
-                    </div>
-                  </div>
+                <div className="space-y-5">
+                  <SeverityBar label="Critical" count={severityCounts.critical} total={totalFindings} color="bg-red-500" textColor="text-red-400" />
+                  <SeverityBar label="Warning" count={severityCounts.warning} total={totalFindings} color="bg-tertiary-container" textColor="text-md3-tertiary" />
+                  <SeverityBar label="Info" count={severityCounts.info} total={totalFindings} color="bg-secondary-container" textColor="text-md3-secondary" />
                 </div>
               </div>
 
@@ -325,24 +307,74 @@ export default function AnalysisPage() {
                   </span>
                 </div>
                 <div className="relative z-10">
-                  <h3 className="font-[var(--font-headline-stack)] text-2xl font-bold tracking-tight mb-6 flex items-center gap-3">
-                    <span className="material-symbols-outlined text-primary-container">psychology</span>
-                    Root Cause Analysis
+                  <h3 className="font-[var(--font-headline-stack)] text-2xl font-bold tracking-tight mb-6">
+                    What We Found
                   </h3>
-                  <div className="bg-surface-container-lowest p-6 rounded-sm border border-outline-variant/10 font-mono text-sm leading-relaxed text-on-surface/80">
-                    <div className="flex items-center gap-2 mb-4">
-                      <span className="w-2 h-2 bg-md3-error rounded-full animate-pulse" />
-                      <span className="text-[10px] text-md3-error uppercase font-bold tracking-widest">
-                        Trace Analysis
-                      </span>
+
+                  {/* Summary — the executive overview */}
+                  {result.summary && (
+                    <div className="mb-6">
+                      <div className="flex items-center gap-2 mb-3">
+                        <span className="material-symbols-outlined text-primary-container text-sm">summarize</span>
+                        <span className="text-[10px] font-[var(--font-headline-stack)] text-primary-container uppercase font-bold tracking-widest">
+                          Summary
+                        </span>
+                      </div>
+                      <p className="text-base leading-relaxed text-on-surface/90">
+                        {result.summary}
+                      </p>
                     </div>
-                    {result.summary && (
-                      <p className="mb-4">&gt; {result.summary}</p>
-                    )}
-                    {result.root_cause && (
-                      <p>&gt; {result.root_cause}</p>
-                    )}
-                  </div>
+                  )}
+
+                  {/* Issues — structured problem → solution list */}
+                  {result.issues && result.issues.length > 0 && (
+                    <div className="space-y-4">
+                      {result.issues.map((issue, idx) => (
+                        <div key={idx} className="bg-surface-container-lowest/60 p-5 rounded-lg border border-outline-variant/10">
+                          <div className="flex items-start gap-3 mb-3">
+                            <span className="material-symbols-outlined text-primary-container text-lg mt-0.5">error_outline</span>
+                            <div>
+                              <h4 className="font-[var(--font-headline-stack)] font-bold text-sm text-on-surface">
+                                {issue.title}
+                              </h4>
+                              <p className="text-xs text-on-surface/60 mt-1 leading-relaxed">
+                                {issue.description}
+                              </p>
+                              {issue.impact && (
+                                <p className="text-xs text-md3-tertiary mt-1">
+                                  Impact: {issue.impact}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                          {issue.steps && issue.steps.length > 0 && (
+                            <div className="ml-8 mt-3 space-y-2">
+                              <span className="text-[10px] font-[var(--font-headline-stack)] text-emerald-400 uppercase font-bold tracking-widest">
+                                How to fix
+                              </span>
+                              <ol className="space-y-1.5">
+                                {issue.steps.map((step, stepIdx) => (
+                                  <li key={stepIdx} className="flex items-start gap-2 text-xs text-on-surface/70 leading-relaxed">
+                                    <span className="text-emerald-400 font-mono font-bold shrink-0">{stepIdx + 1}.</span>
+                                    {step}
+                                  </li>
+                                ))}
+                              </ol>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Fallback: plain root_cause text if no structured issues */}
+                  {(!result.issues || result.issues.length === 0) && result.root_cause && (
+                    <div className="bg-surface-container-lowest/60 p-6 rounded-lg border border-outline-variant/10">
+                      <p className="text-sm leading-relaxed text-on-surface/75 whitespace-pre-line">
+                        {result.root_cause}
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -481,7 +513,7 @@ export default function AnalysisPage() {
 
 /* ─── Sub-components ─── */
 
-function HealthScoreGauge({ score }: { score: number }) {
+function HealthScoreGauge({ score, spinning = false }: { score: number; spinning?: boolean }) {
   const radius = 130;
   const circumference = 2 * Math.PI * radius;
   const pct = score >= 0 ? score / 100 : 0;
@@ -494,7 +526,10 @@ function HealthScoreGauge({ score }: { score: number }) {
       : "text-primary-container";
 
   return (
-    <svg className="w-full h-full -rotate-90" viewBox="0 0 288 288">
+    <svg
+      className={`w-full h-full -rotate-90 ${spinning ? "animate-[spin_3s_linear_infinite]" : ""}`}
+      viewBox="0 0 288 288"
+    >
       <circle
         className="text-surface-container-highest"
         cx="144" cy="144" r={radius}
@@ -518,6 +553,40 @@ function HealthScoreGauge({ score }: { score: number }) {
 }
 
 
+
+function SeverityBar({
+  label,
+  count,
+  total,
+  color,
+  textColor,
+}: {
+  label: string;
+  count: number;
+  total: number;
+  color: string;
+  textColor: string;
+}) {
+  const pct = total > 0 ? (count / total) * 100 : 0;
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <span className={`text-[10px] font-[var(--font-headline-stack)] uppercase tracking-wider font-bold ${textColor}`}>
+          {label}
+        </span>
+        <span className="font-mono text-xs text-on-surface/70">
+          {count} <span className="text-on-surface/30">/ {total}</span>
+        </span>
+      </div>
+      <div className="w-full h-2 bg-surface-container-highest rounded-full overflow-hidden">
+        <div
+          className={`h-full ${color} rounded-full transition-all duration-700`}
+          style={{ width: `${Math.max(pct, count > 0 ? 4 : 0)}%` }}
+        />
+      </div>
+    </div>
+  );
+}
 
 function BottomStat({
   label,
