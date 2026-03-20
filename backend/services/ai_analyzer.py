@@ -100,7 +100,9 @@ def _build_heuristic_summary(findings: list[Finding], namespace: str) -> str:
 
     lines = []
     for f in ns_findings:
-        lines.append(f"- [{f.severity.value.upper()}] {f.title}: {f.description[:150]}")
+        # Include confidence and transient/recovery info if present
+        desc = f.description[:200]
+        lines.append(f"- [{f.severity.value.upper()}] ({f.confidence.value} confidence) {f.title}: {desc}")
     return "\n".join(lines)
 
 
@@ -200,7 +202,8 @@ async def run_synthesis(
     model = _get_model()
 
     findings_summary = "\n".join(
-        f"[{f.severity.value.upper()}] ({f.source.value}) {f.title}: {f.description[:200]}"
+        f"[{f.severity.value.upper()}] ({f.source.value}, {f.confidence.value} confidence) "
+        f"{f.title}: {f.description[:250]}"
         for f in all_findings
     )
 

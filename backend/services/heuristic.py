@@ -7,6 +7,7 @@ No AI calls — fast, reliable, evidence-grounded.
 
 from __future__ import annotations
 
+import re
 import uuid
 from typing import Optional
 
@@ -25,7 +26,7 @@ from models.findings import (
     Severity,
     TimelineEvent,
 )
-from services.bundle_parser import extract_error_lines
+from services.bundle_parser import extract_error_lines, read_log_file
 
 EXIT_CODE_MAP = {
     137: ("OOMKilled or SIGKILL", Severity.CRITICAL),
@@ -86,6 +87,39 @@ POD_STATUS_RULES: dict[str, tuple[Severity, str, str]] = {
     ),
 }
 
+# Patterns for control plane log analysis
+ETCD_ERROR_PATTERNS = [
+    re.compile(r"etcd.*connection\s+(refused|error|failed|reset)", re.IGNORECASE),
+    re.compile(r"etcd.*transport.*closing", re.IGNORECASE),
+    re.compile(r"etcd.*dial\s+tcp.*connection\s+refused", re.IGNORECASE),
+    re.compile(r"etcd.*authentication\s+handshake\s+failed", re.IGNORECASE),
+    re.compile(r"etcd.*context\s+(deadline\s+exceeded|canceled)", re.IGNORECASE),
+    re.compile(r"grpc.*transport.*closing", re.IGNORECASE),
+    re.compile(r"operation\s+was\s+canceled", re.IGNORECASE),
+    re.compile(r"failed\s+to\s+(list|watch|get).*etcd", re.IGNORECASE),
+]
+
+RBAC_ERROR_PATTERN = re.compile(
+    r"(forbidden|unauthorized|cannot\s+(list|watch|get|create|update|delete|patch).*"
+    r"(clusterrole|role|rolebinding|clusterrolebinding|RBAC)?"
+    r"|Failed\s+to\s+watch\s+\*v\d+\."
+    r"|User\s+\"system:.*\"\s+cannot)",
+    re.IGNORECASE,
+)
+
+LEADER_ELECTION_SUCCESS = re.compile(
+    r"(successfully\s+acquired\s+lease|became\s+leader|leading)", re.IGNORECASE
+)
+
+CACHE_SYNC_SUCCESS = re.compile(
+    r"(caches\s+(are\s+)?synced|cache\s+sync\s+complete)", re.IGNORECASE
+)
+
+CONTROL_PLANE_COMPONENTS = {
+    "kube-apiserver", "kube-scheduler", "kube-controller-manager",
+    "etcd", "kube-proxy", "coredns",
+}
+
 
 def run_heuristic_pass(parsed: ParsedBundle) -> list[Finding]:
     findings: list[Finding] = []
@@ -95,6 +129,7 @@ def run_heuristic_pass(parsed: ParsedBundle) -> list[Finding]:
     findings.extend(_check_events(parsed))
     findings.extend(_check_nodes(parsed))
     findings.extend(_check_deployments(parsed))
+    findings.extend(_check_control_plane_logs(parsed))
     findings.extend(_check_log_errors(parsed))
 
     return findings
@@ -380,10 +415,160 @@ def _check_deployments(parsed: ParsedBundle) -> list[Finding]:
     return findings
 
 
+def _check_control_plane_logs(parsed: ParsedBundle) -> list[Finding]:
+    """
+    Analyze control plane component logs for:
+    - etcd connectivity/TLS failures (CRITICAL infrastructure)
+    - RBAC permission errors (with transient vs persistent distinction)
+    - Leader election status (recovery signal)
+    """
+    findings = []
+
+    for lf in parsed.log_files:
+        if lf.size_bytes == 0:
+            continue
+
+        # Only check control plane components
+        component_name = None
+        for cp in CONTROL_PLANE_COMPONENTS:
+            if cp in lf.pod.lower() or cp in lf.container.lower():
+                component_name = cp
+                break
+        if not component_name:
+            continue
+
+        log_content = read_log_file(parsed.extraction_path, lf.path, max_lines=2000)
+        if not log_content:
+            continue
+
+        log_lines = log_content.splitlines()
+
+        # ─── etcd connectivity failures ───
+        if component_name in ("kube-apiserver", "etcd"):
+            etcd_errors = []
+            for i, line in enumerate(log_lines):
+                for pattern in ETCD_ERROR_PATTERNS:
+                    if pattern.search(line):
+                        etcd_errors.append((i + 1, line.strip()))
+                        break
+                if len(etcd_errors) >= 30:
+                    break
+
+            if len(etcd_errors) >= 5:
+                sample = etcd_errors[:5]
+                evidence_text = "\n".join(f"Line {num}: {text[:200]}" for num, text in sample)
+
+                findings.append(_make_finding(
+                    title=f"etcd connectivity failures in {component_name}",
+                    description=(
+                        f"Detected {len(etcd_errors)} etcd connection error(s) in `{component_name}` logs. "
+                        f"The API server cannot reliably communicate with etcd, which prevents reading "
+                        f"and writing cluster state. This is a critical infrastructure issue that affects "
+                        f"all cluster operations."
+                    ),
+                    severity=Severity.CRITICAL,
+                    namespace="kube-system",
+                    resource_name=lf.pod,
+                    resource_kind="Pod",
+                    evidence=[Evidence(
+                        evidence_type=EvidenceType.LOG_LINE,
+                        source_file=lf.path,
+                        content=evidence_text,
+                    )],
+                    remediation=(
+                        "1. Check etcd pod health: `kubectl get pods -n kube-system -l component=etcd`\n"
+                        "2. Verify etcd endpoints: `kubectl get endpoints -n kube-system etcd`\n"
+                        "3. Check etcd TLS certificates for expiry: `openssl x509 -in /etc/kubernetes/pki/etcd/server.crt -noout -dates`\n"
+                        "4. Review etcd logs: `kubectl logs -n kube-system etcd-<node> --tail=100`\n"
+                        "5. If TLS handshake failures: regenerate etcd certificates with `kubeadm init phase certs etcd-server`"
+                    ),
+                    category="control-plane",
+                    confidence=Confidence.HIGH,
+                ))
+
+        # ─── RBAC / permission errors ───
+        rbac_errors = []
+        for i, line in enumerate(log_lines):
+            if RBAC_ERROR_PATTERN.search(line):
+                rbac_errors.append((i + 1, line.strip()))
+            if len(rbac_errors) >= 30:
+                break
+
+        if rbac_errors:
+            # Check for recovery signals — leader election success and cache sync
+            has_leader = any(LEADER_ELECTION_SUCCESS.search(line) for line in log_lines)
+            has_cache_sync = any(CACHE_SYNC_SUCCESS.search(line) for line in log_lines)
+            recovered = has_leader or has_cache_sync
+
+            # Determine if errors are transient (startup) or persistent
+            # If we see recovery signals after RBAC errors, they're likely transient
+            if recovered:
+                severity = Severity.WARNING
+                transient_note = (
+                    " However, the component subsequently acquired its leader lease and synced caches, "
+                    "indicating these errors are likely transient startup race conditions rather than "
+                    "persistent permission failures."
+                )
+                confidence = Confidence.MEDIUM
+            else:
+                severity = Severity.CRITICAL if len(rbac_errors) >= 10 else Severity.WARNING
+                transient_note = ""
+                confidence = Confidence.HIGH
+
+            sample = rbac_errors[:5]
+            evidence_text = "\n".join(f"Line {num}: {text[:200]}" for num, text in sample)
+
+            # Extract the specific resources that are failing
+            failed_resources = set()
+            resource_pattern = re.compile(r"Failed to (?:list|watch|get) \*(\S+)", re.IGNORECASE)
+            for _, line_text in rbac_errors:
+                match = resource_pattern.search(line_text)
+                if match:
+                    failed_resources.add(match.group(1))
+
+            resource_list = ", ".join(sorted(failed_resources)[:10]) if failed_resources else "various resources"
+
+            findings.append(_make_finding(
+                title=f"RBAC permission errors in {component_name}",
+                description=(
+                    f"Detected {len(rbac_errors)} RBAC/permission error(s) in `{component_name}` logs "
+                    f"affecting: {resource_list}.{transient_note}"
+                ),
+                severity=severity,
+                namespace="kube-system",
+                resource_name=lf.pod,
+                resource_kind="Pod",
+                evidence=[Evidence(
+                    evidence_type=EvidenceType.LOG_LINE,
+                    source_file=lf.path,
+                    content=evidence_text,
+                )],
+                remediation=(
+                    f"1. Verify ClusterRoleBinding exists: `kubectl get clusterrolebinding system:{component_name}`\n"
+                    f"2. Check ClusterRole permissions: `kubectl describe clusterrole system:{component_name}`\n"
+                    f"3. If errors are for specific resources (e.g., storageclasses, configmaps), check if the "
+                    f"permissions exist in a separate ClusterRole (e.g., system:volume-scheduler)\n"
+                    f"4. If transient (startup only), these may be race conditions and not require action"
+                ),
+                category="control-plane",
+                confidence=confidence,
+            ))
+
+    return findings
+
+
 def _check_log_errors(parsed: ParsedBundle) -> list[Finding]:
     findings = []
     for lf in parsed.log_files:
         if lf.size_bytes == 0:
+            continue
+
+        # Skip control plane components (handled by _check_control_plane_logs)
+        is_control_plane = any(
+            cp in lf.pod.lower() or cp in lf.container.lower()
+            for cp in CONTROL_PLANE_COMPONENTS
+        )
+        if is_control_plane:
             continue
 
         errors = extract_error_lines(parsed.extraction_path, lf.path, context_lines=2)
