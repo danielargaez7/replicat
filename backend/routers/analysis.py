@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 
 from fastapi import APIRouter, HTTPException, Query
@@ -13,12 +14,22 @@ from database import (
     async_session,
 )
 from models.findings import AnalysisResult
+from security import is_valid_uuid, safe_resolve_path
+
+logger = logging.getLogger("bundlescope")
 
 router = APIRouter(tags=["analysis"])
 
 
+def _validate_analysis_id(analysis_id: str) -> None:
+    if not is_valid_uuid(analysis_id):
+        raise HTTPException(status_code=400, detail="Invalid analysis ID format")
+
+
 @router.get("/analysis/{analysis_id}")
 async def get_analysis(analysis_id: str):
+    _validate_analysis_id(analysis_id)
+
     # Try cache first
     cached = await get_cached_result(analysis_id)
     if cached:
@@ -37,11 +48,21 @@ async def get_analysis(analysis_id: str):
 
 
 @router.get("/analysis/{analysis_id}/logs")
-async def get_log_file(analysis_id: str, path: str = Query(...)):
+async def get_log_file(analysis_id: str, path: str = Query(..., max_length=500)):
+    _validate_analysis_id(analysis_id)
+
     async with async_session() as session:
         record = await session.get(BundleRootRecord, analysis_id)
     if not record:
         raise HTTPException(status_code=404, detail="Bundle data not found")
+
+    # ─── Path traversal protection ───
+    resolved = safe_resolve_path(record.root_path, path)
+    if resolved is None:
+        raise HTTPException(status_code=403, detail="Access denied: invalid file path")
+
+    if not os.path.isfile(resolved):
+        raise HTTPException(status_code=404, detail="Log file not found")
 
     from services.bundle_parser import read_log_file
 
@@ -53,6 +74,8 @@ async def get_log_file(analysis_id: str, path: str = Query(...)):
 
 @router.get("/analysis/{analysis_id}/files")
 async def get_file_tree(analysis_id: str):
+    _validate_analysis_id(analysis_id)
+
     async with async_session() as session:
         record = await session.get(AnalysisResultRecord, analysis_id)
     if not record:
@@ -62,6 +85,8 @@ async def get_file_tree(analysis_id: str):
 
 @router.get("/analysis/{analysis_id}/stream")
 async def stream_analysis(analysis_id: str):
+    _validate_analysis_id(analysis_id)
+
     from services.pipeline import run_analysis_pipeline
 
     async with async_session() as session:
@@ -75,21 +100,26 @@ async def stream_analysis(analysis_id: str):
         raise HTTPException(status_code=404, detail="Bundle file not found")
 
     async def event_stream():
-        async for event_type, data in run_analysis_pipeline(analysis_id, bundle_path):
-            payload = json.dumps(data) if isinstance(data, (dict, list)) else str(data)
-            yield f"event: {event_type}\ndata: {payload}\n\n"
+        try:
+            async for event_type, data in run_analysis_pipeline(analysis_id, bundle_path):
+                payload = json.dumps(data) if isinstance(data, (dict, list)) else str(data)
+                yield f"event: {event_type}\ndata: {payload}\n\n"
 
-            if event_type == "complete":
-                result = AnalysisResult(**data)
-                result_record = AnalysisResultRecord(
-                    id=analysis_id,
-                    bundle_id=result.bundle_id,
-                    result_data=data,
-                )
-                async with async_session() as session:
-                    await session.merge(result_record)
-                    await session.commit()
-                await set_cached_result(analysis_id, data)
+                if event_type == "complete":
+                    result = AnalysisResult(**data)
+                    result_record = AnalysisResultRecord(
+                        id=analysis_id,
+                        bundle_id=result.bundle_id,
+                        result_data=data,
+                    )
+                    async with async_session() as session:
+                        await session.merge(result_record)
+                        await session.commit()
+                    await set_cached_result(analysis_id, data)
+        except Exception as e:
+            logger.exception("Stream error for analysis %s: %s", analysis_id, e)
+            error_payload = json.dumps({"message": "Analysis encountered an error. Please retry."})
+            yield f"event: error\ndata: {error_payload}\n\n"
 
     return StreamingResponse(
         event_stream(),

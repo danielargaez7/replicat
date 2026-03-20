@@ -1,9 +1,6 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { Send, Bot, User, Loader2, Sparkles } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { sendChatMessage } from "@/lib/api";
 
@@ -58,24 +55,22 @@ export function ChatPanel({ analysisId }: { analysisId: string }) {
       <ScrollArea className="flex-1 pr-4" ref={scrollRef}>
         <div className="space-y-4 py-4">
           {messages.length === 0 && (
-            <div className="text-center space-y-4 py-8">
-              <Sparkles className="h-8 w-8 mx-auto text-muted-foreground" />
-              <div>
-                <p className="text-sm text-muted-foreground">
-                  Ask questions about this support bundle analysis
-                </p>
-              </div>
+            <div className="text-center space-y-6 py-8">
+              <span className="material-symbols-outlined text-4xl text-on-surface/20">
+                auto_awesome
+              </span>
+              <p className="text-sm text-on-surface/40">
+                Ask questions about this support bundle analysis
+              </p>
               <div className="flex flex-wrap gap-2 justify-center">
                 {SUGGESTED_QUESTIONS.map((q) => (
-                  <Button
+                  <button
                     key={q}
-                    variant="outline"
-                    size="sm"
-                    className="text-xs"
                     onClick={() => send(q)}
+                    className="px-4 py-2 rounded-lg border border-outline-variant/20 bg-surface-container/60 text-xs text-on-surface/50 hover:text-on-surface hover:border-primary-container/30 hover:bg-surface-container-high/50 transition-all font-[var(--font-headline-stack)] uppercase tracking-wider font-bold"
                   >
                     {q}
-                  </Button>
+                  </button>
                 ))}
               </div>
             </div>
@@ -87,22 +82,26 @@ export function ChatPanel({ analysisId }: { analysisId: string }) {
               className={`flex gap-3 ${msg.role === "user" ? "justify-end" : ""}`}
             >
               {msg.role === "assistant" && (
-                <div className="h-7 w-7 rounded-md bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
-                  <Bot className="h-4 w-4 text-primary" />
+                <div className="h-8 w-8 rounded-lg bg-md3-tertiary/10 flex items-center justify-center shrink-0 mt-0.5 border border-md3-tertiary/20">
+                  <span className="material-symbols-outlined text-md3-tertiary text-base">
+                    smart_toy
+                  </span>
                 </div>
               )}
               <div
-                className={`rounded-lg px-4 py-2.5 max-w-[80%] text-sm leading-relaxed ${
+                className={`rounded-xl px-4 py-3 max-w-[80%] text-sm leading-relaxed ${
                   msg.role === "user"
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-muted/50 border border-border/30"
+                    ? "signature-gradient text-on-primary"
+                    : "glass-card"
                 }`}
               >
                 <div className="whitespace-pre-wrap">{msg.content}</div>
               </div>
               {msg.role === "user" && (
-                <div className="h-7 w-7 rounded-md bg-muted flex items-center justify-center shrink-0 mt-0.5">
-                  <User className="h-4 w-4 text-muted-foreground" />
+                <div className="h-8 w-8 rounded-lg bg-surface-container-highest flex items-center justify-center shrink-0 mt-0.5 border border-outline-variant/20">
+                  <span className="material-symbols-outlined text-on-surface/50 text-base">
+                    person
+                  </span>
                 </div>
               )}
             </div>
@@ -110,11 +109,15 @@ export function ChatPanel({ analysisId }: { analysisId: string }) {
 
           {isLoading && (
             <div className="flex gap-3">
-              <div className="h-7 w-7 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
-                <Bot className="h-4 w-4 text-primary" />
+              <div className="h-8 w-8 rounded-lg bg-md3-tertiary/10 flex items-center justify-center shrink-0 border border-md3-tertiary/20">
+                <span className="material-symbols-outlined text-md3-tertiary text-base">
+                  smart_toy
+                </span>
               </div>
-              <div className="bg-muted/50 border border-border/30 rounded-lg px-4 py-2.5">
-                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+              <div className="glass-card rounded-xl px-4 py-3">
+                <span className="material-symbols-outlined text-on-surface/40 text-base animate-spin">
+                  progress_activity
+                </span>
               </div>
             </div>
           )}
@@ -122,13 +125,13 @@ export function ChatPanel({ analysisId }: { analysisId: string }) {
       </ScrollArea>
 
       {/* Input */}
-      <div className="border-t border-border/50 pt-4 mt-auto">
+      <div className="border-t border-outline-variant/10 pt-4 mt-auto">
         <div className="flex gap-2">
-          <Textarea
+          <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Ask about the analysis..."
-            className="min-h-[44px] max-h-32 resize-none"
+            className="flex-1 min-h-[44px] max-h-32 resize-none bg-surface-container/60 backdrop-blur-md border border-outline-variant/20 rounded-lg px-4 py-3 text-sm text-on-surface placeholder:text-on-surface/30 focus:outline-none focus:border-primary-container/50 focus:ring-1 focus:ring-primary-container/20 transition-all"
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
@@ -136,14 +139,13 @@ export function ChatPanel({ analysisId }: { analysisId: string }) {
               }
             }}
           />
-          <Button
-            size="icon"
+          <button
             onClick={() => send(input)}
             disabled={!input.trim() || isLoading}
-            className="shrink-0 h-11 w-11"
+            className="shrink-0 h-11 w-11 rounded-lg signature-gradient flex items-center justify-center shadow-[0_0_15px_rgba(255,82,96,0.2)] disabled:opacity-30 disabled:shadow-none active:scale-95 transition-all"
           >
-            <Send className="h-4 w-4" />
-          </Button>
+            <span className="material-symbols-outlined text-on-primary text-base">send</span>
+          </button>
         </div>
       </div>
     </div>
