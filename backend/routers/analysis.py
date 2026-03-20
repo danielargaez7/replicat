@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 
-from cache import get_cached_result, set_cached_result
+from cache import get_cached_result
 from database import (
     AnalysisRecord,
     AnalysisResultRecord,
@@ -104,18 +104,7 @@ async def stream_analysis(analysis_id: str):
             async for event_type, data in run_analysis_pipeline(analysis_id, bundle_path):
                 payload = json.dumps(data) if isinstance(data, (dict, list)) else str(data)
                 yield f"event: {event_type}\ndata: {payload}\n\n"
-
-                if event_type == "complete":
-                    result = AnalysisResult(**data)
-                    result_record = AnalysisResultRecord(
-                        id=analysis_id,
-                        bundle_id=result.bundle_id,
-                        result_data=data,
-                    )
-                    async with async_session() as session:
-                        await session.merge(result_record)
-                        await session.commit()
-                    await set_cached_result(analysis_id, data)
+                # DB write + cache are handled inside the pipeline
         except Exception as e:
             logger.exception("Stream error for analysis %s: %s", analysis_id, e)
             error_payload = json.dumps({"message": "Analysis encountered an error. Please retry."})

@@ -1,10 +1,18 @@
 """
 Orchestrates the full analysis pipeline.
 Yields (event_type, data) tuples for SSE streaming.
+
+Optimizations:
+- Parallel namespace analysis via asyncio.gather
+- Streaming extraction (pipe mode tar)
+- LLM response caching (skips API calls on cache hit)
+- Model tiering (fast model for triage, full model for synthesis)
 """
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from typing import AsyncGenerator
 
 from database import AnalysisRecord, async_session
@@ -12,6 +20,8 @@ from models.bundle import AnalysisStatus
 from models.findings import AnalysisResult, Finding
 from services.bundle_parser import parse_bundle
 from services.heuristic import run_heuristic_pass
+
+logger = logging.getLogger("bundlescope")
 
 
 async def _set_status(analysis_id: str, status: AnalysisStatus):
@@ -47,6 +57,7 @@ async def run_analysis_pipeline(
     yield ("status", {"phase": "heuristic_pass", "message": "Running heuristic analysis..."})
     heuristic_findings = run_heuristic_pass(parsed)
 
+    # Stream heuristic findings immediately — fast time-to-first-result
     for finding in heuristic_findings:
         yield ("finding", finding.model_dump())
 
@@ -70,17 +81,42 @@ async def run_analysis_pipeline(
             namespaces_with_issues = set(parsed.namespaces[:5])
 
         total_ns = len(namespaces_with_issues)
-        for i, ns in enumerate(namespaces_with_issues):
-            yield ("status", {
-                "phase": "ai_analysis",
-                "message": f"AI analyzing namespace: {ns}",
-                "progress": f"{i + 1}/{total_ns}",
-            })
+        ns_list = sorted(namespaces_with_issues)
 
-            ns_findings = await run_ai_analysis(parsed, ns, heuristic_findings)
+        yield ("status", {
+            "phase": "ai_analysis",
+            "message": f"AI analyzing {total_ns} namespace(s) in parallel: {', '.join(ns_list[:5])}{'...' if total_ns > 5 else ''}",
+            "progress": f"0/{total_ns}",
+        })
+
+        # Run all namespace analyses in parallel — uses asyncio.gather for speed
+        # LLM cache hits return instantly; cache misses call the API
+        tasks = [
+            run_ai_analysis(parsed, ns, heuristic_findings)
+            for ns in ns_list
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for i, (ns, result_or_exc) in enumerate(zip(ns_list, results)):
+            if isinstance(result_or_exc, Exception):
+                logger.error("AI analysis failed for %s: %s", ns, result_or_exc)
+                yield ("status", {
+                    "phase": "ai_analysis",
+                    "message": f"AI analysis failed for {ns}: {result_or_exc}",
+                    "progress": f"{i + 1}/{total_ns}",
+                })
+                continue
+
+            ns_findings = result_or_exc
             ai_findings.extend(ns_findings)
             for finding in ns_findings:
                 yield ("finding", finding.model_dump())
+
+            yield ("status", {
+                "phase": "ai_analysis",
+                "message": f"Completed namespace: {ns}",
+                "progress": f"{i + 1}/{total_ns}",
+            })
 
         all_findings.extend(ai_findings)
 
@@ -91,6 +127,7 @@ async def run_analysis_pipeline(
         root_cause = synthesis.get("root_cause", "")
 
     except Exception as e:
+        logger.error("AI pipeline error: %s", e)
         yield ("status", {
             "phase": "ai_skipped",
             "message": f"AI analysis unavailable: {e}. Showing heuristic results only.",
@@ -129,14 +166,27 @@ async def run_analysis_pipeline(
         event_warning_count=warning_events,
     )
 
-    from database import BundleRootRecord
+    # Batch write — single transaction for result + bundle root
+    from database import AnalysisResultRecord, BundleRootRecord
+    from cache import set_cached_result
+
     await _set_status(analysis_id, AnalysisStatus.COMPLETE)
+
+    result_data = result.model_dump()
     async with async_session() as session:
+        await session.merge(AnalysisResultRecord(
+            id=analysis_id,
+            bundle_id=analysis_id,
+            result_data=result_data,
+        ))
         await session.merge(BundleRootRecord(
             analysis_id=analysis_id,
             root_path=parsed.extraction_path,
         ))
         await session.commit()
 
+    # Populate result cache
+    await set_cached_result(analysis_id, result_data)
+
     yield ("status", {"phase": "complete", "message": "Analysis complete"})
-    yield ("complete", result.model_dump())
+    yield ("complete", result_data)

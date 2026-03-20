@@ -115,7 +115,7 @@ export function ChatPanel({ analysisId }: { analysisId: string }) {
                 </span>
               </div>
               <div className="glass-card rounded-xl px-4 py-3">
-                <span className="material-symbols-outlined text-on-surface/40 text-base animate-spin">
+                <span className="material-symbols-outlined text-on-surface/40 text-base animate-pulse">
                   progress_activity
                 </span>
               </div>

@@ -57,7 +57,7 @@ export function StreamStatus({
   if (!status) {
     return (
       <div className="flex items-center gap-3 glass-card rounded-xl px-5 py-4">
-        <span className="material-symbols-outlined text-on-surface/40 animate-spin">
+        <span className="material-symbols-outlined text-on-surface/40 animate-pulse">
           progress_activity
         </span>
         <p className="text-sm text-on-surface/50">Starting analysis...</p>
@@ -69,7 +69,7 @@ export function StreamStatus({
 
   return (
     <div className="flex items-center gap-3 glass-card rounded-xl px-5 py-4 border-primary-container/20">
-      <span className="material-symbols-outlined text-primary-container animate-spin">
+      <span className="material-symbols-outlined text-primary-container animate-pulse">
         progress_activity
       </span>
       <div className="flex-1">

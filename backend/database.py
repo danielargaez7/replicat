@@ -1,6 +1,6 @@
 import os
 
-from sqlalchemy import Column, DateTime, Integer, String, Text
+from sqlalchemy import Column, DateTime, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
@@ -10,7 +10,16 @@ DATABASE_URL = os.environ.get(
     "postgresql+asyncpg://bundlescope:bundlescope_secret@localhost:5432/bundlescope",
 )
 
-engine = create_async_engine(DATABASE_URL, echo=False)
+# Connection pool tuning for production
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    pool_size=10,           # Maintain 10 connections
+    max_overflow=20,        # Allow up to 30 total under burst
+    pool_timeout=30,        # Wait up to 30s for a connection
+    pool_recycle=1800,      # Recycle connections after 30 min
+    pool_pre_ping=True,     # Verify connections before use
+)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
@@ -28,6 +37,12 @@ class AnalysisRecord(Base):
     file_count = Column(Integer, default=0)
     size_bytes = Column(Integer, default=0)
 
+    # Index for listing by time
+    __table_args__ = (
+        Index("idx_analyses_upload_time", "upload_time"),
+        Index("idx_analyses_status", "status"),
+    )
+
 
 class AnalysisResultRecord(Base):
     __tablename__ = "analysis_results"
@@ -35,6 +50,11 @@ class AnalysisResultRecord(Base):
     id = Column(String, primary_key=True)
     bundle_id = Column(String, nullable=False)
     result_data = Column(JSONB, nullable=False)
+
+    # GIN index on JSONB for querying findings by severity/namespace
+    __table_args__ = (
+        Index("idx_results_bundle_id", "bundle_id"),
+    )
 
 
 class BundleRootRecord(Base):

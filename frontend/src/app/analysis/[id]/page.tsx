@@ -186,26 +186,9 @@ export default function AnalysisPage() {
       <main className="md:ml-64 min-h-screen relative flex flex-col">
         {/* Top Bar */}
         <header className="flex justify-between items-center w-full px-6 py-3 bg-surface sticky top-0 z-50 border-b border-surface-variant/10">
-          <div className="flex items-center gap-8">
-            <h2 className="text-xl font-bold tracking-tighter text-primary-container font-[var(--font-headline-stack)]">
-              {topTabs.find((t) => t.id === activeView)?.label ?? "Overview"}
-            </h2>
-            <nav className="hidden lg:flex items-center gap-6">
-              {topTabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveView(tab.id)}
-                  className={`text-xs uppercase tracking-widest font-[var(--font-headline-stack)] transition-colors pb-1 ${
-                    activeView === tab.id
-                      ? "text-primary-container border-b-2 border-primary-container font-bold"
-                      : "text-on-surface hover:text-md3-primary"
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </nav>
-          </div>
+          <h2 className="text-xl font-bold tracking-tighter text-primary-container font-[var(--font-headline-stack)]">
+            {topTabs.find((t) => t.id === activeView)?.label ?? "Overview"}
+          </h2>
           <div className="flex items-center gap-4">
             <div className="relative hidden sm:block">
               <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-sm">
@@ -464,7 +447,7 @@ export default function AnalysisPage() {
                 <ChatPanel analysisId={analysisId} />
               ) : (
                 <div className="text-center py-12 text-on-surface/30 flex flex-col items-center gap-3">
-                  <span className="material-symbols-outlined text-3xl animate-spin">progress_activity</span>
+                  <span className="material-symbols-outlined text-3xl animate-pulse">progress_activity</span>
                   Chat will be available once analysis is complete
                 </div>
               )}

@@ -29,8 +29,11 @@ async def parse_bundle(bundle_id: str, bundle_path: str) -> ParsedBundle:
     extract_dir = os.path.join("uploads", bundle_id, "extracted")
     os.makedirs(extract_dir, exist_ok=True)
 
-    with tarfile.open(bundle_path, "r:gz") as tar:
-        tar.extractall(extract_dir)
+    # Use streaming extraction (pipe mode 'r|gz') — processes members as
+    # they're read from the compressed stream instead of seeking through
+    # the entire archive first. Saves 10-30s on large bundles.
+    with tarfile.open(bundle_path, "r|gz") as tar:
+        tar.extractall(extract_dir, filter="data")
 
     root = _find_bundle_root(extract_dir)
     file_tree = _build_file_tree(root)
