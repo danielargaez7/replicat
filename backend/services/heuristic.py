@@ -455,18 +455,38 @@ def _check_control_plane_logs(parsed: ParsedBundle) -> list[Finding]:
                     break
 
             if len(etcd_errors) >= 5:
+                # Check recovery signals — if the apiserver started serving or etcd
+                # elected a leader, these errors are transient startup race conditions
+                serving_pattern = re.compile(
+                    r"Serving (securely|insecure) on", re.IGNORECASE
+                )
+                has_serving = any(serving_pattern.search(line) for line in log_lines)
+                has_leader = any(LEADER_ELECTION_SUCCESS.search(line) for line in log_lines)
+                recovered = has_serving or has_leader
+
+                if recovered:
+                    severity = Severity.WARNING
+                    confidence = Confidence.MEDIUM
+                    transient_note = (
+                        " However, recovery signals were detected (the API server started serving "
+                        "or etcd elected a leader), indicating these are transient startup race "
+                        "conditions rather than a persistent outage."
+                    )
+                else:
+                    severity = Severity.CRITICAL
+                    confidence = Confidence.HIGH
+                    transient_note = ""
+
                 sample = etcd_errors[:5]
                 evidence_text = "\n".join(f"Line {num}: {text[:200]}" for num, text in sample)
 
                 findings.append(_make_finding(
-                    title=f"etcd connectivity failures in {component_name}",
+                    title=f"etcd connectivity errors in {component_name}{' (transient)' if recovered else ''}",
                     description=(
-                        f"Detected {len(etcd_errors)} etcd connection error(s) in `{component_name}` logs. "
-                        f"The API server cannot reliably communicate with etcd, which prevents reading "
-                        f"and writing cluster state. This is a critical infrastructure issue that affects "
-                        f"all cluster operations."
+                        f"Detected {len(etcd_errors)} etcd connection error(s) in `{component_name}` logs."
+                        f"{transient_note if recovered else ' The API server cannot reliably communicate with etcd, which prevents reading and writing cluster state. This is a critical infrastructure issue that affects all cluster operations.'}"
                     ),
-                    severity=Severity.CRITICAL,
+                    severity=severity,
                     namespace="kube-system",
                     resource_name=lf.pod,
                     resource_kind="Pod",
@@ -481,9 +501,10 @@ def _check_control_plane_logs(parsed: ParsedBundle) -> list[Finding]:
                         "3. Check etcd TLS certificates for expiry: `openssl x509 -in /etc/kubernetes/pki/etcd/server.crt -noout -dates`\n"
                         "4. Review etcd logs: `kubectl logs -n kube-system etcd-<node> --tail=100`\n"
                         "5. If TLS handshake failures: regenerate etcd certificates with `kubeadm init phase certs etcd-server`"
+                        + ("\n6. If errors are only at startup with recovery signals, no action needed." if recovered else "")
                     ),
                     category="control-plane",
-                    confidence=Confidence.HIGH,
+                    confidence=confidence,
                 ))
 
         # ─── RBAC / permission errors ───
@@ -625,13 +646,28 @@ def build_timeline_events(parsed: ParsedBundle) -> list[TimelineEvent]:
     return events
 
 
+_HEALTH_DEDUCTIONS: dict[str, dict[str, int]] = {
+    # Cluster-wide scope — these can take down everything
+    "control-plane": {"critical": 20, "warning": 4, "info": 0},
+    "node-health":   {"critical": 15, "warning": 5, "info": 0},
+    # Workload scope — affects only that service
+    "workload":      {"critical": 8,  "warning": 3, "info": 0},
+    "pod-health":    {"critical": 6,  "warning": 2, "info": 0},
+    "container-exit":{"critical": 4,  "warning": 2, "info": 0},
+    "storage":       {"critical": 8,  "warning": 3, "info": 0},
+    "scheduling":    {"critical": 6,  "warning": 2, "info": 0},
+    # Low-signal categories
+    "logs":          {"critical": 3,  "warning": 1, "info": 0},
+    "events":        {"critical": 4,  "warning": 1, "info": 0},
+    "probe-health":  {"critical": 4,  "warning": 2, "info": 0},
+}
+_DEFAULT_DEDUCTIONS = {"critical": 5, "warning": 2, "info": 0}
+
+
 def calculate_health_score(findings: list[Finding]) -> int:
     score = 100
     for f in findings:
-        if f.severity == Severity.CRITICAL:
-            score -= 15
-        elif f.severity == Severity.WARNING:
-            score -= 5
-        elif f.severity == Severity.INFO:
-            score -= 1
+        sev_key = f.severity.value.lower()
+        deductions = _HEALTH_DEDUCTIONS.get(f.category or "", _DEFAULT_DEDUCTIONS)
+        score -= deductions.get(sev_key, 0)
     return max(0, min(100, score))

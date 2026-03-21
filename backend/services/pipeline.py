@@ -78,8 +78,32 @@ async def run_analysis_pipeline(
         from services.ai_analyzer import run_ai_analysis, run_synthesis
 
         namespaces_with_issues = {f.namespace for f in heuristic_findings if f.namespace}
+
+        # Also include namespaces that have warning events even without heuristic findings
+        ns_with_warning_events = {
+            e.namespace for e in parsed.events
+            if e.event_type == "Warning" and e.namespace
+        }
+        namespaces_with_issues |= ns_with_warning_events
+
+        # Skip namespaces where all pods are healthy and there are no warning events
+        # — AI analysis would find nothing and wastes LLM calls
+        def _ns_has_unhealthy_pods(ns: str) -> bool:
+            return any(
+                p.namespace == ns and (
+                    p.phase not in ("Running", "Succeeded")
+                    or p.status_reason in ("CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull", "OOMKilled", "Evicted")
+                    or any(not c.ready for c in p.containers)
+                )
+                for p in parsed.pods
+            )
+
+        namespaces_with_issues = {
+            ns for ns in namespaces_with_issues if _ns_has_unhealthy_pods(ns) or ns in ns_with_warning_events
+        }
+
         if not namespaces_with_issues:
-            namespaces_with_issues = set(parsed.namespaces[:5])
+            namespaces_with_issues = set(parsed.namespaces[:3])
 
         total_ns = len(namespaces_with_issues)
         ns_list = sorted(namespaces_with_issues)

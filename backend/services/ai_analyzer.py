@@ -302,18 +302,35 @@ async def run_synthesis(
     client = _get_client()
     model = _get_synthesis_model()
 
+    # Filter to CRITICAL + WARNING only — INFO findings add noise without helping synthesis
+    actionable_findings = [f for f in all_findings if f.severity != Severity.INFO]
     findings_summary = "\n".join(
         f"[{f.severity.value.upper()}] ({f.source.value}, {f.confidence.value} confidence) "
         f"{f.title}: {f.description[:250]}"
-        for f in all_findings
+        for f in actionable_findings
     )
 
     cluster_ver = parsed.cluster_version.get("gitVersion", "unknown") if parsed.cluster_version else "unknown"
+    nodes_ready = sum(1 for n in parsed.nodes if n.ready)
+    pods_failing = [
+        p for p in parsed.pods
+        if p.phase not in ("Running", "Succeeded")
+        or p.status_reason in ("CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull", "OOMKilled", "Evicted")
+        or any(not c.ready for c in p.containers)
+    ]
+    pods_healthy = len(parsed.pods) - len(pods_failing)
+    critical_count = sum(1 for f in all_findings if f.severity == Severity.CRITICAL)
+    warning_count = sum(1 for f in all_findings if f.severity == Severity.WARNING)
+    failing_summary = ", ".join(
+        f"{p.name} ({p.status_reason or p.phase})" for p in pods_failing[:10]
+    ) or "none"
     cluster_context = (
         f"Kubernetes version: {cluster_ver}\n"
         f"Namespaces: {len(parsed.namespaces)}\n"
-        f"Nodes: {len(parsed.nodes)} (Ready: {sum(1 for n in parsed.nodes if n.ready)})\n"
-        f"Pods: {len(parsed.pods)}\n"
+        f"Nodes: {len(parsed.nodes)} total, {nodes_ready} Ready, {len(parsed.nodes) - nodes_ready} NotReady\n"
+        f"Pods: {len(parsed.pods)} total, {pods_healthy} healthy, {len(pods_failing)} failing\n"
+        f"Failing pods: {failing_summary}\n"
+        f"Findings: {critical_count} critical, {warning_count} warning\n"
         f"Total findings: {len(all_findings)}"
     )
 
@@ -355,8 +372,7 @@ async def run_synthesis(
         return {
             "summary": result.get("summary", "Analysis complete."),
             "root_cause": result.get("root_cause", ""),
-            "priority_order": result.get("priority_order", []),
-            "correlated_groups": result.get("correlated_groups", []),
+            "issues": result.get("issues", []),
         }
 
     except Exception as e:

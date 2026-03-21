@@ -490,21 +490,32 @@ export default function AnalysisPage() {
 
       {/* Floating Action Button */}
       {isComplete && findings.length > 0 && (
-        <div className="fixed bottom-8 right-8 z-50">
+        <div className="fixed bottom-8 right-8 z-50 flex gap-3">
           <button
             onClick={() => setActiveView("findings")}
-            className="flex items-center gap-3 bg-gradient-to-r from-primary-container to-inverse-primary p-4 rounded-xl shadow-[0_10px_30px_rgba(255,82,96,0.3)] hover:-translate-y-1 transition-all active:scale-95 text-on-primary-container"
+            className="flex items-center gap-3 bg-surface-container-highest/80 backdrop-blur-md p-4 rounded-xl border border-outline-variant/20 hover:border-primary-container/50 hover:-translate-y-1 transition-all active:scale-95 text-on-surface/70"
           >
-            <span
-              className="material-symbols-outlined"
-              style={{ fontVariationSettings: "'FILL' 1" }}
-            >
-              bolt
-            </span>
+            <span className="material-symbols-outlined text-sm">analytics</span>
             <span className="font-[var(--font-headline-stack)] text-xs font-bold uppercase tracking-widest">
-              View All Findings
+              All Findings
             </span>
           </button>
+          {(severityCounts.critical > 0 || severityCounts.warning > 0) && (
+            <Link
+              href={`/analysis/${analysisId}/remediate`}
+              className="flex items-center gap-3 bg-gradient-to-r from-primary-container to-inverse-primary p-4 rounded-xl shadow-[0_10px_30px_rgba(255,82,96,0.3)] hover:-translate-y-1 transition-all active:scale-95 text-on-primary-container"
+            >
+              <span
+                className="material-symbols-outlined"
+                style={{ fontVariationSettings: "'FILL' 1" }}
+              >
+                healing
+              </span>
+              <span className="font-[var(--font-headline-stack)] text-xs font-bold uppercase tracking-widest">
+                Fix Issues
+              </span>
+            </Link>
+          )}
         </div>
       )}
     </div>

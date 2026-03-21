@@ -62,6 +62,52 @@ export interface AnalysisResult {
   event_warning_count: number;
 }
 
+// ─── Remediation types ───
+
+export type RiskLevel = "low" | "medium" | "high" | "critical";
+
+export interface RemediationCommand {
+  description: string;
+  command: string;
+  requires_sudo: boolean;
+}
+
+export interface RemediationItem {
+  id: string;
+  finding_id?: string;
+  issue_index?: number;
+  order: number;
+  title: string;
+  description: string;
+  severity: Severity;
+  risk_level: RiskLevel;
+  estimated_downtime?: string;
+  requires_approval: boolean;
+  approved: boolean;
+  auto_resolves: boolean;
+  depends_on: string[];
+  commands: RemediationCommand[];
+  rollback_commands: RemediationCommand[];
+  namespace?: string;
+  resource_kind?: string;
+  resource_name?: string;
+  evidence_summary: string;
+  original_remediation?: string;
+}
+
+export interface RemediationPlan {
+  analysis_id: string;
+  created_at: string;
+  cluster_version?: string;
+  summary?: string;
+  root_cause?: string;
+  health_score: number;
+  items: RemediationItem[];
+  total_items: number;
+  critical_count: number;
+  auto_resolve_count: number;
+}
+
 export interface AnalysisStatus {
   phase: string;
   message: string;

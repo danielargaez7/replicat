@@ -1,0 +1,11 @@
+apiVersion: v2
+name: bundlescope-operator
+description: Bundlescope Remediation Operator for Kubernetes
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - kubernetes
+  - remediation
+  - support-bundle
+  - troubleshoot

@@ -90,14 +90,6 @@ export default function HomePage() {
               Documentation
             </a>
           </div>
-          <div className="flex items-center gap-4">
-            <button className="font-[var(--font-headline-stack)] tracking-tight font-bold uppercase text-[0.75rem] text-on-surface hover:text-primary-container transition-colors">
-              Sign In
-            </button>
-            <button className="signature-gradient px-6 py-2 rounded-lg font-[var(--font-headline-stack)] tracking-tight font-bold uppercase text-[0.75rem] text-on-primary shadow-[0_0_15px_rgba(255,82,96,0.3)] active:scale-95 transition-transform">
-              Get Demo
-            </button>
-          </div>
         </div>
       </nav>
 

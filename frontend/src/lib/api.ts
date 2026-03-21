@@ -44,3 +44,22 @@ export async function getLogFile(analysisId: string, logPath: string) {
   if (!res.ok) throw new Error("Failed to fetch log file");
   return res.json();
 }
+
+export async function getRemediationPlan(analysisId: string) {
+  const res = await fetch(`${API_BASE}/api/analysis/${analysisId}/remediation-plan`);
+  if (!res.ok) throw new Error("Failed to fetch remediation plan");
+  return res.json();
+}
+
+export function getPlaybookUrl(analysisId: string): string {
+  return `${API_BASE}/api/analysis/${analysisId}/playbook`;
+}
+
+export async function approveRemediation(analysisId: string, remediationId: string) {
+  const res = await fetch(
+    `${API_BASE}/api/analysis/${analysisId}/remediation/${remediationId}/approve`,
+    { method: "POST" }
+  );
+  if (!res.ok) throw new Error("Failed to approve remediation");
+  return res.json();
+}

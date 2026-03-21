@@ -73,6 +73,15 @@ class ChatMessageRecord(Base):
     content = Column(Text, nullable=False)
 
 
+class RemediationApprovalRecord(Base):
+    __tablename__ = "remediation_approvals"
+
+    id = Column(String, primary_key=True)  # remediation_id
+    analysis_id = Column(String, nullable=False, index=True)
+    approved_at = Column(DateTime(timezone=True))
+    approved_by = Column(String, default="")
+
+
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
